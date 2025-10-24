@@ -18,10 +18,3 @@ services:
       - key: BACKEND_PORT
         value: 10000
     healthCheckPath: /docs
-
-  # PostgreSQL Database
-  - type: pserv
-    name: pos-db
-    env: postgresql
-    plan: starter
-    region: singapore
