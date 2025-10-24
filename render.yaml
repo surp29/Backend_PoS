@@ -12,7 +12,7 @@ services:
       - key: JWT_SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS
-        value: https://your-frontend-domain.vercel.app
+        value: https://pos.vercel.app
       - key: FLASK_ENV
         value: production
       - key: BACKEND_PORT
@@ -25,8 +25,3 @@ services:
     env: postgresql
     plan: starter
     region: singapore
-    maxConnections: 20
-    disk:
-      name: pos-disk
-      mountPath: /var/lib/postgresql/data
-      size: 1GB
