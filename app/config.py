@@ -8,9 +8,7 @@ class Config:
     """Configuration class for the application"""
     
     # Database configuration
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
-    if not SQLALCHEMY_DATABASE_URI:
-        raise ValueError("DATABASE_URL environment variable is required")
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'sqlite:///pos.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     
     # JWT configuration
