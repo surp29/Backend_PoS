@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import Order, OrderItem, Product, Account
+from ..models import Order, Product, Account
 from sqlalchemy import or_
 from ..schemas_fastapi import OrderOut, OrderCreate, OrderUpdate
+from ..logger import log_info, log_success, log_error, log_warning
 from fastapi import Body
+from ..services.orders import create_order_service
 
 
 def is_cancelled(status: str | None) -> bool:
@@ -87,113 +89,51 @@ def search_orders(customer_id: int | None = None, q: str | None = None, db: Sess
 
 @router.post("/")
 def create_order(payload: OrderCreate, db: Session = Depends(get_db)):
-    print(f"=== DEBUG CREATE ORDER ===")
-    print(f"sp_banggia: {payload.sp_banggia}")
-    print(f"so_luong: {payload.so_luong}")
-    
-    # Tìm sản phẩm và bảng giá dựa trên sp_banggia
-    product = None
-    price_item = None
-    is_product = False
-    is_action = False
-    
-    if payload.sp_banggia:
-        # Tìm trong bảng prices trước để xác định có phải hành động không
-        from ..models import Price
-        price_item = db.query(Price).filter(Price.ma_sp == payload.sp_banggia).first()
-        print(f"Price item found: {price_item}")
-        
-        if price_item and price_item.loai_sp or '' == 'Hành động':
-            # Nếu tìm thấy trong prices và là hành động
-            is_action = True
-            print(f"✅ {payload.sp_banggia} là HÀNH ĐỘNG (từ bảng prices) - KHÔNG kiểm tra tồn kho")
-        else:
-            # Tìm trong bảng products
-            product = db.query(Product).filter(Product.ma_sp == payload.sp_banggia).first()
-            print(f"Product found: {product}")
-            
-            if product:
-                is_product = True
-                print(f"✅ {payload.sp_banggia} là SẢN PHẨM - sẽ kiểm tra tồn kho")
-            else:
-                # Nếu không tìm thấy ở đâu cả, coi như là hành động
-                is_action = True
-                print(f"✅ {payload.sp_banggia} là HÀNH ĐỘNG (không tìm thấy) - KHÔNG kiểm tra tồn kho")
-    
-    # Tính tổng tiền theo đơn giá chuẩn
-    computed_total = payload.tong_tien or 0
-    if payload.so_luong:
-        if is_product and product:
-            unit_price = float(product.gia_chung or 0 or 0)
-            computed_total = unit_price * int(payload.so_luong or 0)
-        elif is_action:
-            # Với hành động, sử dụng giá từ price_item hoặc payload
-            if price_item:
-                unit_price = float(price_item.gia_chung or 0 or 0)
-            else:
-                # Nếu không có price_item, sử dụng giá từ payload
-                unit_price = float(payload.tong_tien or 0) / max(int(payload.so_luong or 1), 1)
-            computed_total = unit_price * int(payload.so_luong or 0)
-    
-    # Kiểm tra mã đơn hàng đã tồn tại chưa
-    existing_order = db.query(Order).filter(Order.ma_don_hang == payload.ma_don_hang).first()
-    if existing_order:
-        print(f"❌ LỖI: Mã đơn hàng {payload.ma_don_hang} đã tồn tại!")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Mã đơn hàng '{payload.ma_don_hang}' đã tồn tại! Vui lòng chọn mã khác."
-        )
-    
-    # CHỈ kiểm tra và trừ kho nếu là SẢN PHẨM (không phải hành động)
-    print(f"=== INVENTORY CHECK ===")
-    print(f"is_product: {is_product}")
-    print(f"product: {product}")
-    print(f"so_luong: {payload.so_luong}")
-    print(f"trang_thai: {payload.trang_thai}")
-    print(f"is_cancelled: {is_cancelled(payload.trang_thai)}")
-    
-    if is_product and product and payload.so_luong and not is_cancelled(payload.trang_thai):
-        current_qty = int(product.so_luong or 0 or 0)
-        print(f"🔍 Kiểm tra tồn kho: Hiện có {current_qty}, cần {payload.so_luong}")
-        if current_qty < payload.so_luong:
-            print(f"❌ LỖI: Số lượng không đủ!")
+    log_info("CREATE_ORDER", f"Tạo đơn hàng mới: {payload.ma_don_hang} - Khách hàng: {payload.thong_tin_kh}")
+    log_info("CREATE_ORDER", f"Payload details: sp_banggia={payload.sp_banggia}, so_luong={payload.so_luong}, tong_tien={payload.tong_tien}")
+    try:
+        service_res = create_order_service(payload, db)
+        is_product = service_res['is_product']
+        is_action = service_res['is_action']
+        product = service_res['product']
+        price_item = service_res['price_item']
+        computed_total = service_res['computed_total']
+        existing_order = db.query(Order).filter(Order.ma_don_hang == payload.ma_don_hang).first()
+        if existing_order:
+            log_error("CREATE_ORDER", f"Mã đơn hàng {payload.ma_don_hang} đã tồn tại!")
             raise HTTPException(
-                status_code=400, 
-                detail=f"Số lượng sản phẩm {payload.sp_banggia} không đủ! Hiện có: {current_qty}, yêu cầu: {payload.so_luong}"
+                status_code=400,
+                detail=f"Mã đơn hàng '{payload.ma_don_hang}' đã tồn tại! Vui lòng chọn mã khác."
             )
-        print(f"✅ Số lượng đủ, tiếp tục tạo đơn hàng")
-    else:
-        print(f"⏭️ Bỏ qua kiểm tra tồn kho (không phải sản phẩm hoặc đơn bị hủy)")
-    
-    # Tạo đơn hàng
-    o = Order(
-        ma_don_hang=payload.ma_don_hang,
-        thong_tin_kh=payload.thong_tin_kh,
-        sp_banggia=payload.sp_banggia,
-        ngay_tao=payload.ngay_tao,
-        ma_co_quan_thue=payload.ma_co_quan_thue,
-        so_luong=payload.so_luong,
-        tong_tien=computed_total,
-        hinh_thuc_tt=payload.hinh_thuc_tt,
-        trang_thai=payload.trang_thai,
-    )
-    db.add(o)
-    db.commit()
-    db.refresh(o)
-    
-    # CHỈ trừ số lượng sản phẩm nếu là SẢN PHẨM và đơn không bị hủy
-    if is_product and product and payload.so_luong and not is_cancelled(payload.trang_thai):
-        new_qty = max(int(product.so_luong or 0 or 0) - int(payload.so_luong or 0), 0)
-        setattr(product, 'so_luong', new_qty)
-        setattr(product, 'trang_thai', 'Còn hàng' if new_qty > 0 else 'Hết hàng')
+        o = Order(
+            ma_don_hang=payload.ma_don_hang,
+            thong_tin_kh=payload.thong_tin_kh,
+            sp_banggia=payload.sp_banggia,
+            ngay_tao=payload.ngay_tao,
+            ma_co_quan_thue=payload.ma_co_quan_thue,
+            so_luong=payload.so_luong,
+            tong_tien=computed_total,
+            hinh_thuc_tt=payload.hinh_thuc_tt,
+            trang_thai=payload.trang_thai,
+        )
+        db.add(o)
         db.commit()
-    
-    print(f"=== ORDER CREATED SUCCESSFULLY ===")
-    print(f"Order ID: {o.id}")
-    print(f"Final is_product: {is_product}")
-    print(f"Final is_action: {is_action}")
-    
-    return {"success": True, "id": o.id}
+        db.refresh(o)
+        # Trừ kho nếu là sản phẩm
+        if is_product and product and payload.so_luong:
+            current_qty = int(getattr(product, 'so_luong', 0) or 0)
+            new_qty = max(current_qty - int(payload.so_luong or 0), 0)
+            setattr(product, 'so_luong', new_qty)
+            setattr(product, 'trang_thai', 'Còn hàng' if new_qty > 0 else 'Hết hàng')
+            db.commit()
+            log_success("CREATE_ORDER", f"Đã trừ số lượng sản phẩm {payload.sp_banggia}: {new_qty} còn lại")
+        log_success("CREATE_ORDER", f"Tạo đơn hàng thành công: {payload.ma_don_hang} - Tổng tiền: {computed_total:,.0f} VND")
+        return {"success": True, "id": o.id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_error("CREATE_ORDER", f"Lỗi khi tạo đơn hàng {payload.ma_don_hang}", error=e)
+        raise HTTPException(status_code=500, detail=f"Lỗi khi tạo đơn hàng: {str(e)}")
 
 
 @router.put("/{order_id}")
@@ -222,36 +162,23 @@ def update_order(order_id: int, payload: OrderUpdate, db: Session = Depends(get_
     
     # Kiểm tra loại cũ
     if old_sp_banggia:
-        from ..models import Price
-        old_price_item = db.query(Price).filter(Price.ma_sp == old_sp_banggia).first()
-        
-        if old_price_item and old_price_item.loai_sp or '' == 'Hành động':
-            old_is_action = True
+        old_product = db.query(Product).filter(Product.ma_sp == old_sp_banggia).first()
+        if old_product:
+            old_is_product = True
         else:
-            old_product = db.query(Product).filter(Product.ma_sp == old_sp_banggia).first()
-            if old_product:
-                old_is_product = True
-            else:
-                old_is_action = True
+            old_is_action = True
     
     # Kiểm tra loại mới
     if payload.sp_banggia is not None:
         if payload.sp_banggia:
-            from ..models import Price
-            new_price_item = db.query(Price).filter(Price.ma_sp == payload.sp_banggia).first()
-            
-            if new_price_item and new_price_item.loai_sp or '' == 'Hành động':
-                new_is_action = True
+            new_product = db.query(Product).filter(Product.ma_sp == payload.sp_banggia).first()
+            if new_product:
+                new_is_product = True
             else:
-                new_product = db.query(Product).filter(Product.ma_sp == payload.sp_banggia).first()
-                if new_product:
-                    new_is_product = True
-                else:
-                    new_is_action = True
+                new_is_action = True
     else:
         # Giữ nguyên loại cũ
         new_product = old_product
-        new_price_item = old_price_item
         new_is_product = old_is_product
         new_is_action = old_is_action
     

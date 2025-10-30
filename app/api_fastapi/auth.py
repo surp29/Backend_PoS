@@ -5,6 +5,7 @@ from typing import Optional
 from ..database import get_db
 from ..models import User
 from ..schemas_fastapi import UserLogin, UserResponse
+from ..logger import log_info, log_success, log_error, log_warning
 from werkzeug.security import check_password_hash
 import jwt
 from datetime import datetime, timedelta

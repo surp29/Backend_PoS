@@ -5,7 +5,7 @@ from ..models import Warehouse
 from ..schemas_fastapi import WarehouseOut, WarehouseCreate
 
 
-router = APIRouter()
+router = APIRouter(prefix="/warehouse", tags=["warehouse"])
 
 
 @router.get("/", response_model=list[WarehouseOut])

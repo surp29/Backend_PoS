@@ -43,6 +43,7 @@ class ProductOut(BaseModel):
     don_vi: Optional[str] = 'cái'  # Unit field
     trang_thai: Optional[str] = None
     mo_ta: Optional[str] = None
+    image_url: Optional[str] = None  # Image URL field
 
     class Config:
         from_attributes = True
@@ -52,9 +53,8 @@ class PriceOut(BaseModel):
     id: int
     ma_sp: str
     ten_sp: str
-    loai_sp: str
-    gia_von: float
     gia_chung: float
+    ghi_chu: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
@@ -84,17 +84,15 @@ class ProductGroupUpdate(BaseModel):
 class PriceCreate(BaseModel):
     ma_sp: str
     ten_sp: str
-    loai_sp: Optional[str] = 'Hành động'
-    gia_von: float
     gia_chung: float
+    ghi_chu: Optional[str] = None
 
 
 class PriceUpdate(BaseModel):
     ma_sp: Optional[str] = None
     ten_sp: Optional[str] = None
-    loai_sp: Optional[str] = None
-    gia_von: Optional[float] = None
     gia_chung: Optional[float] = None
+    ghi_chu: Optional[str] = None
 
 
 class ProductCreate(BaseModel):
@@ -108,6 +106,7 @@ class ProductCreate(BaseModel):
     don_vi: Optional[str] = 'cái'  # Unit field
     trang_thai: Optional[str] = None
     mo_ta: Optional[str] = None
+    image_url: Optional[str] = None  # Image URL field
     
     # Frontend compatibility fields
     code: Optional[str] = None  # Alias for ma_sp
@@ -131,6 +130,7 @@ class ProductUpdate(BaseModel):
     don_vi: Optional[str] = None  # Unit field
     trang_thai: Optional[str] = None
     mo_ta: Optional[str] = None
+    image_url: Optional[str] = None  # Image URL field
     
     # Frontend compatibility fields
     code: Optional[str] = None  # Alias for ma_sp
@@ -201,6 +201,7 @@ class AccountOut(BaseModel):
     so_dt: Optional[str]
     dia_chi: Optional[str]
     trang_thai: Optional[bool]
+    total_spent: Optional[float] = 0.0
 
     class Config:
         from_attributes = True
@@ -214,6 +215,7 @@ class AccountCreate(BaseModel):
     so_dt: Optional[str] = None
     dia_chi: Optional[str] = None
     trang_thai: Optional[bool] = True
+    total_spent: Optional[float] = 0.0
 
 
 class AccountUpdate(BaseModel):
@@ -224,6 +226,8 @@ class AccountUpdate(BaseModel):
     so_dt: Optional[str] = None
     dia_chi: Optional[str] = None
     trang_thai: Optional[bool] = None
+    total_spent: Optional[float] = None
+    total_spent_increment: Optional[float] = None  # Để tăng total_spent thay vì set trực tiếp
 
 
 # Orders
@@ -282,7 +286,6 @@ class InvoiceOut(BaseModel):
     ngay_hd: Optional[date]
     nguoi_mua: Optional[str]
     tong_tien: Optional[float]
-    loai_hd: Optional[str]
     trang_thai: Optional[str]
 
     class Config:
@@ -294,7 +297,6 @@ class InvoiceCreate(BaseModel):
     ngay_hd: date
     nguoi_mua: str
     tong_tien: float
-    loai_hd: str
     trang_thai: Optional[str] = 'Đã thanh toán'
 
 
@@ -303,107 +305,7 @@ class InvoiceUpdate(BaseModel):
     ngay_hd: Optional[date] = None
     nguoi_mua: Optional[str] = None
     tong_tien: Optional[float] = None
-    loai_hd: Optional[str] = None
     trang_thai: Optional[str] = None
-
-
-# Reports
-class ReportOut(BaseModel):
-    id: int
-    ten_bao_cao: Optional[str] = None
-    loai_bao_cao: Optional[str] = None
-    tu_ngay: Optional[date] = None
-    den_ngay: Optional[date] = None
-    du_lieu: Optional[str] = None
-    tong_doanh_thu: Optional[float] = 0
-    tong_so_luong_ban: Optional[int] = 0
-    tong_so_luong_con_lai: Optional[int] = 0
-    ngay_tao: Optional[datetime] = None
-    trang_thai: Optional[str] = 'active'
-
-    class Config:
-        from_attributes = True
-
-
-class ReportCreate(BaseModel):
-    ten_bao_cao: str
-    loai_bao_cao: str
-    tu_ngay: date
-    den_ngay: date
-    du_lieu: Optional[str] = None
-    tong_doanh_thu: Optional[float] = 0
-    tong_so_luong_ban: Optional[int] = 0
-    tong_so_luong_con_lai: Optional[int] = 0
-    trang_thai: Optional[str] = 'active'
-
-
-class ReportUpdate(BaseModel):
-    ten_bao_cao: Optional[str] = None
-    loai_bao_cao: Optional[str] = None
-    tu_ngay: Optional[date] = None
-    den_ngay: Optional[date] = None
-    du_lieu: Optional[str] = None
-    tong_doanh_thu: Optional[float] = None
-    tong_so_luong_ban: Optional[int] = None
-    tong_so_luong_con_lai: Optional[int] = None
-    trang_thai: Optional[str] = None
-
-
-# Debts
-class DebtOut(BaseModel):
-    id: int
-    customer_name: str
-    total_debt: Decimal
-    paid_amount: Decimal
-    remaining_debt: Decimal
-    status: str
-    last_payment_date: Optional[datetime] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-
-class DebtCreate(BaseModel):
-    customer_name: str
-    total_debt: Decimal = Decimal('0.00')
-    paid_amount: Decimal = Decimal('0.00')
-    remaining_debt: Decimal = Decimal('0.00')
-    status: Optional[str] = 'Còn nợ'
-
-
-class DebtUpdate(BaseModel):
-    total_debt: Optional[Decimal] = None
-    paid_amount: Optional[Decimal] = None
-    remaining_debt: Optional[Decimal] = None
-    status: Optional[str] = None
-    last_payment_date: Optional[datetime] = None
-
-
-
-
-
-class GeneralDiaryCreate(BaseModel):
-    ngay_nhap: Optional[date] = None
-    so_hieu: Optional[str] = None
-    dien_giai: Optional[str] = None
-    tk_no: Optional[str] = None
-    tk_co: Optional[str] = None
-    so_luong_nhap: Optional[int] = 0
-    so_luong_xuat: Optional[int] = 0
-    so_tien: Optional[float] = 0
-
-    class Config:
-        from_attributes = True
-
-
-class ProductGroupCreate(BaseModel):
-    ten_nhom: str
-    mo_ta: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 
 # Area schemas
@@ -483,6 +385,77 @@ class ShopOut(ShopBase):
     created_at: datetime
     updated_at: datetime
     area_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+# Discount Code Schemas
+class DiscountCodeBase(BaseModel):
+    code: str
+    name: str
+    description: Optional[str] = None
+    discount_type: str  # 'percentage' or 'fixed'
+    discount_value: float
+    start_date: datetime
+    end_date: datetime
+    max_uses: Optional[int] = None
+    min_order_value: float = 0.0
+    status: str = 'active'
+
+
+class DiscountCodeCreate(DiscountCodeBase):
+    pass
+
+
+class DiscountCodeUpdate(BaseModel):
+    code: Optional[str] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+    discount_type: Optional[str] = None
+    discount_value: Optional[float] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    max_uses: Optional[int] = None
+    min_order_value: Optional[float] = None
+    status: Optional[str] = None
+
+
+class DiscountCodeOut(DiscountCodeBase):
+    id: int
+    used_count: int = 0
+    total_savings: float = 0.0
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class GeneralDiaryCreate(BaseModel):
+    ngay_nhap: Optional[date] = None
+    so_hieu: Optional[str] = None
+    dien_giai: Optional[str] = None
+    tk_no: Optional[str] = None
+    tk_co: Optional[str] = None
+    so_luong_nhap: Optional[int] = 0
+    so_luong_xuat: Optional[int] = 0
+    so_tien: Optional[float] = 0
+
+    class Config:
+        from_attributes = True
+
+
+class GeneralDiaryOut(BaseModel):
+    id: int
+    ngay_nhap: Optional[date] = None
+    so_hieu: Optional[str] = None
+    dien_giai: Optional[str] = None
+    tk_no: Optional[str] = None
+    tk_co: Optional[str] = None
+    so_luong_nhap: Optional[int] = 0
+    so_luong_xuat: Optional[int] = 0
+    so_tien: Optional[float] = 0
 
     class Config:
         from_attributes = True

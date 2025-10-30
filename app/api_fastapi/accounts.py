@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Account
 from ..schemas_fastapi import AccountOut, AccountCreate, AccountUpdate
+from ..logger import log_info, log_success, log_error, log_warning
 
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -24,19 +25,29 @@ def get_account(account_id: int, db: Session = Depends(get_db)):
 
 @router.post("/")
 def create_account(payload: AccountCreate, db: Session = Depends(get_db)):
-    acc = Account(
-        ten_tk=payload.ten_tk,
-        tk_no=payload.tk_no,
-        tk_co=payload.tk_co,
-        email=payload.email,
-        so_dt=payload.so_dt,
-        dia_chi=payload.dia_chi,
-        trang_thai=payload.trang_thai,
-    )
-    db.add(acc)
-    db.commit()
-    db.refresh(acc)
-    return {"success": True, "id": acc.id}
+    """Tạo tài khoản khách hàng mới"""
+    log_info("CREATE_ACCOUNT", f"Tạo tài khoản mới: {payload.ten_tk} - Email: {payload.email}")
+    
+    try:
+        acc = Account(
+            ten_tk=payload.ten_tk,
+            tk_no=payload.tk_no,
+            tk_co=payload.tk_co,
+            email=payload.email,
+            so_dt=payload.so_dt,
+            dia_chi=payload.dia_chi,
+            trang_thai=payload.trang_thai,
+            total_spent=payload.total_spent or 0.0,
+        )
+        db.add(acc)
+        db.commit()
+        db.refresh(acc)
+        
+        log_success("CREATE_ACCOUNT", f"Tạo tài khoản thành công: {payload.ten_tk} (ID: {acc.id})")
+        return {"success": True, "id": acc.id}
+    except Exception as e:
+        log_error("CREATE_ACCOUNT", f"Lỗi khi tạo tài khoản {payload.ten_tk}", error=e)
+        raise HTTPException(status_code=500, detail=f"Lỗi tạo tài khoản: {str(e)}")
 
 
 @router.put("/{account_id}")
@@ -58,6 +69,11 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
         acc.dia_chi = payload.dia_chi
     if payload.trang_thai is not None:
         acc.trang_thai = payload.trang_thai
+    # Xử lý total_spent: ưu tiên increment, nếu không có thì set trực tiếp
+    if payload.total_spent_increment is not None:
+        acc.total_spent = (acc.total_spent or 0.0) + float(payload.total_spent_increment)
+    elif payload.total_spent is not None:
+        acc.total_spent = payload.total_spent
     db.commit()
     return {"success": True}
 

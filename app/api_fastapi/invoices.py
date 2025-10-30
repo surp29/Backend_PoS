@@ -1,8 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import Invoice, Debt
+from ..models import Invoice
 from ..schemas_fastapi import InvoiceOut, InvoiceCreate, InvoiceUpdate
+from ..logger import log_info, log_success, log_error, log_warning
+from ..services.invoices import update_debt_for_customer
 from datetime import datetime
 
 
@@ -16,6 +18,9 @@ def list_invoices(db: Session = Depends(get_db)):
 
 @router.post("/")
 def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
+    """Tạo hóa đơn mới"""
+    log_info("CREATE_INVOICE", f"Tạo hóa đơn mới: {payload.so_hd} - Khách hàng: {payload.nguoi_mua} - Tổng tiền: {payload.tong_tien:,.0f} VND")
+    
     try:
         # Tạo hóa đơn mới
         inv = Invoice(
@@ -23,7 +28,6 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
             ngay_hd=payload.ngay_hd,
             nguoi_mua=payload.nguoi_mua,
             tong_tien=payload.tong_tien,
-            loai_hd=payload.loai_hd,
             trang_thai=payload.trang_thai,
         )
         db.add(inv)
@@ -33,56 +37,12 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
         # Cập nhật bảng công nợ
         update_debt_for_customer(payload.nguoi_mua, db)
         
+        log_success("CREATE_INVOICE", f"Tạo hóa đơn thành công: {payload.so_hd} (ID: {inv.id})")
         return {"success": True, "id": inv.id}
     except Exception as e:
+        log_error("CREATE_INVOICE", f"Lỗi khi tạo hóa đơn {payload.so_hd}", error=e)
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Lỗi tạo hóa đơn: {str(e)}")
-
-
-def update_debt_for_customer(customer_name: str, db: Session):
-    """Cập nhật bảng công nợ cho khách hàng"""
-    try:
-        # Tìm tất cả hóa đơn của khách hàng này
-        invoices = db.query(Invoice).filter(Invoice.nguoi_mua == customer_name).all()
-        
-        if not invoices:
-            return
-        
-        # Tính tổng công nợ và số tiền đã thanh toán
-        total_debt = sum(float(invoice.tong_tien or 0 or 0) for invoice in invoices)
-        paid_amount = sum(float(invoice.tong_tien or 0 or 0) for invoice in invoices 
-                         if str(invoice.trang_thai or '' or '') == 'Đã thanh toán')
-        remaining_debt = total_debt - paid_amount
-        
-        # Tìm hoặc tạo record trong bảng Debt
-        debt_record = db.query(Debt).filter(Debt.customer_name == customer_name).first()
-        
-        if debt_record:
-            # Cập nhật record hiện có
-            setattr(debt_record, 'total_debt', total_debt)
-            setattr(debt_record, 'paid_amount', paid_amount)
-            setattr(debt_record, 'remaining_debt', remaining_debt)
-            setattr(debt_record, 'status', 'Hết nợ' if remaining_debt <= 0 else 'Còn nợ')
-            if paid_amount > 0:
-                setattr(debt_record, 'last_payment_date', datetime.now())
-        else:
-            # Tạo record mới
-            debt_record = Debt(
-                customer_name=customer_name,
-                total_debt=total_debt,
-                paid_amount=paid_amount,
-                remaining_debt=remaining_debt,
-                status='Hết nợ' if remaining_debt <= 0 else 'Còn nợ',
-                created_at=datetime.now()
-            )
-            db.add(debt_record)
-        
-        db.commit()
-        print(f"✅ Đã cập nhật công nợ cho {customer_name}: Tổng={total_debt:,.0f}, Đã trả={paid_amount:,.0f}, Còn nợ={remaining_debt:,.0f}")
-        
-    except Exception as e:
-        print(f"❌ Lỗi cập nhật công nợ cho {customer_name}: {e}")
-        db.rollback()
 
 
 @router.put("/{invoice_id:int}")
