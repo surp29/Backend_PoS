@@ -21,8 +21,9 @@ import os
 import sys
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
-from app.database import engine, Base
+from app.database import engine, Base, SessionLocal
 from app.models import *  # Import tất cả models để đảm bảo được đăng ký
+from werkzeug.security import generate_password_hash
 
 def setup_database():
     """Tạo tất cả bảng trong database"""
@@ -48,5 +49,35 @@ def setup_database():
         print(f"❌ Lỗi không xác định: {e}")
         sys.exit(1)
 
+def ensure_default_admin(username: str = "admin", password: str = "admin123"):
+    """Tạo sẵn tài khoản admin nếu chưa tồn tại."""
+    db = SessionLocal()
+    try:
+        existing = db.query(User).filter(User.username == username).first()
+        if existing:
+            print(f"ℹ️  Tài khoản '{username}' đã tồn tại. Bỏ qua tạo mới.")
+            return
+        hashed = generate_password_hash(password)
+        user = User(
+            username=username,
+            password=hashed,
+            name="Administrator",
+            email=None,
+            phone=None,
+            position="Admin",
+            department="System",
+            status=True,
+        )
+        db.add(user)
+        db.commit()
+        print("✅ Đã tạo tài khoản admin mặc định: username=admin, password=admin123")
+    except Exception as e:
+        db.rollback()
+        print(f"❌ Lỗi khi tạo tài khoản admin mặc định: {e}")
+        sys.exit(1)
+    finally:
+        db.close()
+
 if __name__ == "__main__":
     setup_database()
+    ensure_default_admin()
