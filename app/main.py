@@ -4,7 +4,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from .database import Base, engine
+from .database import Base, engine, SessionLocal
+from .models import User
+from werkzeug.security import generate_password_hash
 from .config import Config
 from .logger import (
     log_request, log_response, log_error, log_info, 
@@ -173,6 +175,32 @@ app.include_router(schedules.router, prefix="/api", tags=["schedules"])  # minim
 @app.on_event("startup")
 async def startup_event():
     """Khởi động application"""
+    # Ensure default admin for free plan where pre-deploy is unavailable
+    try:
+        username = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
+        password = os.getenv("DEFAULT_ADMIN_PASSWORD", "admin123")
+        enabled = os.getenv("DEFAULT_ADMIN_ENABLED", "true").lower() in ("1", "true", "yes")
+        if enabled:
+            db = SessionLocal()
+            try:
+                existing = db.query(User).filter(User.username == username).first()
+                if not existing:
+                    user = User(
+                        username=username,
+                        password=generate_password_hash(password),
+                        name="Administrator",
+                        position="Admin",
+                        department="System",
+                        status=True,
+                    )
+                    db.add(user)
+                    db.commit()
+                    log_success("STARTUP", f"Đã tạo tài khoản mặc định '{username}'")
+            finally:
+                db.close()
+    except Exception as _e:
+        # Don't block startup if creation fails; it will be visible in logs
+        log_warning("STARTUP", f"Không thể tạo admin mặc định: {_e}")
     log_success("STARTUP", "🚀 PhanMemKeToan Backend đã khởi động thành công!")
     log_info("STARTUP", f"📡 API đang chạy tại: http://localhost:{Config.BACKEND_PORT}")
     log_info("STARTUP", f"📚 API Docs: http://localhost:{Config.BACKEND_PORT}/docs")
