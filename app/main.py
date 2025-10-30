@@ -175,6 +175,11 @@ app.include_router(schedules.router, prefix="/api", tags=["schedules"])  # minim
 @app.on_event("startup")
 async def startup_event():
     """Khởi động application"""
+    # Ensure tables exist even in production (Render free plan has no pre-deploy)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as _e:
+        log_warning("STARTUP", f"Không thể tạo bảng tự động: {_e}")
     # Ensure default admin for free plan where pre-deploy is unavailable
     try:
         username = os.getenv("DEFAULT_ADMIN_USERNAME", "admin")
