@@ -18,6 +18,7 @@ class User(Base):
     phone = Column(String(20))
     position = Column(String(100))
     department = Column(String(100))
+    address = Column(String(255))
     status = Column(Boolean, default=True)
     
     def __repr__(self):
@@ -36,6 +37,7 @@ class Account(Base):
     so_dt = Column(String(20))
     dia_chi = Column(String(255))
     trang_thai = Column(Boolean, default=True)
+    total_spent = Column(Float, default=0.0)
     
     def __repr__(self):
         return f"<Account(ten_tk='{self.ten_tk}')>"
@@ -116,6 +118,7 @@ class Invoice(Base):
     ngay_hd = Column(Date, nullable=False)
     nguoi_mua = Column(String(100), nullable=False)
     tong_tien = Column(Float, nullable=False)
+    loai_hd = Column(String(50))
     trang_thai = Column(String(50), default='pending')
     
     def __repr__(self):
@@ -129,6 +132,7 @@ class Order(Base):
     id = Column(Integer, primary_key=True)
     ma_don_hang = Column(String(50), unique=True, nullable=False, index=True)
     thong_tin_kh = Column(String(255))
+    sp_banggia = Column(String(100))
     ngay_tao = Column(Date, nullable=False)
     so_luong = Column(Integer, default=1)
     tong_tien = Column(Float, default=0.0)
@@ -162,7 +166,7 @@ class Warehouse(Base):
     id = Column(Integer, primary_key=True)
     ma_kho = Column(String(50), unique=True, nullable=False, index=True)
     ten_kho = Column(String(100), nullable=False)
-    ma_sp = Column(String(20), unique=True, nullable=False, index=True)
+    ma_sp = Column(String(20), nullable=False, index=True)
     gia_nhap = Column(Float, default=0.0)
     so_luong = Column(Integer, default=0)
     dia_chi = Column(String(255))
@@ -211,6 +215,7 @@ class Shop(Base):
     name = Column(String(100), nullable=False, index=True)
     code = Column(String(20), unique=True, nullable=False, index=True)
     area_id = Column(Integer, ForeignKey('areas.id'), nullable=False)
+    type = Column(String(50))
     address = Column(Text, nullable=False)
     phone = Column(String(20))
     email = Column(String(120))

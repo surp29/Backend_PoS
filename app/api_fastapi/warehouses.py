@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Warehouse
-from ..schemas_fastapi import WarehouseOut, WarehouseCreate
+from ..schemas_fastapi import WarehouseOut, WarehouseCreate, WarehouseUpdate
 
 
 router = APIRouter(prefix="/warehouse", tags=["warehouse"])
@@ -18,21 +18,37 @@ def add_warehouse(payload: WarehouseCreate, db: Session = Depends(get_db)):
     wh = Warehouse(
         ma_kho=payload.ma_kho,
         ten_kho=payload.ten_kho,
+        ma_sp=payload.ma_sp,
+        gia_nhap=payload.gia_nhap,
+        so_luong=payload.so_luong,
         dia_chi=payload.dia_chi,
         dien_thoai=payload.dien_thoai,
-        so_luong_sp=payload.so_luong_sp,
+        ghi_chu=payload.ghi_chu,
         trang_thai=payload.trang_thai,
-        nhom_san_pham=payload.nhom_san_pham,
-        mo_ta=payload.mo_ta,
     )
     db.add(wh)
     db.commit()
+    db.refresh(wh)
+    return {"success": True}
+
+
+@router.put("/{warehouse_id}")
+def update_warehouse(warehouse_id: int, payload: WarehouseUpdate, db: Session = Depends(get_db)):
+    wh = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
+    if not wh:
+        raise HTTPException(status_code=404, detail="Không tìm thấy kho hàng")
+    
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(wh, key, value)
+    
+    db.commit()
+    db.refresh(wh)
     return {"success": True}
 
 
 @router.delete("/{warehouse_id}")
 def delete_warehouse(warehouse_id: int, db: Session = Depends(get_db)):
-    wh = db.query(Warehouse).get(warehouse_id)
+    wh = db.query(Warehouse).filter(Warehouse.id == warehouse_id).first()
     if not wh:
         raise HTTPException(status_code=404, detail="Không tìm thấy kho hàng")
     db.delete(wh)

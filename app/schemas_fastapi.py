@@ -64,14 +64,15 @@ class PriceOut(BaseModel):
 
 class WarehouseOut(BaseModel):
     id: int
-    ma_kho: Optional[str]
-    ten_kho: Optional[str]
-    dia_chi: Optional[str]
-    so_luong_sp: Optional[int]
-    trang_thai: Optional[str]
-    dien_thoai: Optional[str]
-    nhom_san_pham: Optional[str]
-    mo_ta: Optional[str]
+    ma_kho: Optional[str] = None
+    ten_kho: Optional[str] = None
+    ma_sp: Optional[str] = None
+    gia_nhap: Optional[float] = 0.0
+    so_luong: Optional[int] = 0
+    dia_chi: Optional[str] = None
+    dien_thoai: Optional[str] = None
+    ghi_chu: Optional[str] = None
+    trang_thai: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -146,12 +147,25 @@ class ProductUpdate(BaseModel):
 class WarehouseCreate(BaseModel):
     ma_kho: str
     ten_kho: str
-    dia_chi: str
+    ma_sp: str
+    gia_nhap: Optional[float] = 0.0
+    so_luong: Optional[int] = 0
+    dia_chi: Optional[str] = None
     dien_thoai: Optional[str] = None
-    so_luong_sp: Optional[int] = 0
-    trang_thai: Optional[str] = 'Hoạt động'
-    nhom_san_pham: Optional[str] = None
-    mo_ta: Optional[str] = None
+    ghi_chu: Optional[str] = None
+    trang_thai: Optional[str] = 'active'
+
+
+class WarehouseUpdate(BaseModel):
+    ma_kho: Optional[str] = None
+    ten_kho: Optional[str] = None
+    ma_sp: Optional[str] = None
+    gia_nhap: Optional[float] = None
+    so_luong: Optional[int] = None
+    dia_chi: Optional[str] = None
+    dien_thoai: Optional[str] = None
+    ghi_chu: Optional[str] = None
+    trang_thai: Optional[str] = None
 
 
 # Users
@@ -163,6 +177,7 @@ class UserOut(BaseModel):
     phone: Optional[str] = None
     position: Optional[str] = None
     department: Optional[str] = None
+    address: Optional[str] = None
     status: Optional[bool] = True
 
     class Config:
@@ -177,6 +192,7 @@ class UserCreate(BaseModel):
     phone: Optional[str] = None
     position: Optional[str] = None
     department: Optional[str] = None
+    address: Optional[str] = None
     status: Optional[bool] = True
 
 
@@ -188,6 +204,7 @@ class UserUpdate(BaseModel):
     phone: Optional[str] = None
     position: Optional[str] = None
     department: Optional[str] = None
+    address: Optional[str] = None
     status: Optional[bool] = None
 
 
@@ -286,6 +303,7 @@ class InvoiceOut(BaseModel):
     ngay_hd: Optional[date]
     nguoi_mua: Optional[str]
     tong_tien: Optional[float]
+    loai_hd: Optional[str] = None
     trang_thai: Optional[str]
 
     class Config:
@@ -297,6 +315,7 @@ class InvoiceCreate(BaseModel):
     ngay_hd: date
     nguoi_mua: str
     tong_tien: float
+    loai_hd: Optional[str] = None
     trang_thai: Optional[str] = 'Đã thanh toán'
 
 
@@ -305,6 +324,7 @@ class InvoiceUpdate(BaseModel):
     ngay_hd: Optional[date] = None
     nguoi_mua: Optional[str] = None
     tong_tien: Optional[float] = None
+    loai_hd: Optional[str] = None
     trang_thai: Optional[str] = None
 
 
@@ -359,6 +379,7 @@ class ShopBase(BaseModel):
     name: str
     code: str
     area_id: int
+    type: Optional[str] = None
     address: str
     phone: Optional[str] = None
     email: Optional[str] = None
@@ -373,6 +394,7 @@ class ShopUpdate(BaseModel):
     name: Optional[str] = None
     code: Optional[str] = None
     area_id: Optional[int] = None
+    type: Optional[str] = None
     address: Optional[str] = None
     phone: Optional[str] = None
     email: Optional[str] = None

@@ -34,6 +34,7 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db)):
         phone=payload.phone,
         position=payload.position,
         department=payload.department,
+        address=payload.address,
         status=payload.status,
     )
     db.add(user)
@@ -63,6 +64,8 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
         user.position = payload.position
     if payload.department is not None:
         user.department = payload.department
+    if payload.address is not None:
+        user.address = payload.address
     if payload.status is not None:
         user.status = payload.status
     db.commit()

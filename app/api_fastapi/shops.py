@@ -34,6 +34,10 @@ def read_shops(
     for shop in shops:
         area = db.query(Area).filter(Area.id == shop.area_id).first()
         shop_dict = {**{col.name: getattr(shop, col.name) for col in Shop.__table__.columns}, "area_name": area.name if area else None}
+        # Map to Vietnamese field names for frontend
+        shop_dict["ten_shop"] = shop_dict.get("name")
+        shop_dict["ma_shop"] = shop_dict.get("code")
+        shop_dict["dia_chi"] = shop_dict.get("address")
         result.append(shop_dict)
     return result
 
@@ -44,6 +48,10 @@ def read_shop(shop_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
     area = db.query(Area).filter(Area.id == shop.area_id).first()
     shop_dict = {**{col.name: getattr(shop, col.name) for col in Shop.__table__.columns}, "area_name": area.name if area else None}
+    # Map to Vietnamese field names for frontend
+    shop_dict["ten_shop"] = shop_dict.get("name")
+    shop_dict["ma_shop"] = shop_dict.get("code")
+    shop_dict["dia_chi"] = shop_dict.get("address")
     return shop_dict
 
 @router.post("/", response_model=ShopOut)
@@ -104,7 +112,15 @@ def get_shops_by_area(area_id: int, db: Session = Depends(get_db)):
     if not area:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
     shops = db.query(Shop).filter(Shop.area_id == area_id).all()
-    return shops
+    result = []
+    for shop in shops:
+        shop_dict = {**{col.name: getattr(shop, col.name) for col in Shop.__table__.columns}}
+        # Map to Vietnamese field names for frontend
+        shop_dict["ten_shop"] = shop_dict.get("name")
+        shop_dict["ma_shop"] = shop_dict.get("code")
+        shop_dict["dia_chi"] = shop_dict.get("address")
+        result.append(shop_dict)
+    return result
 
 @router.get("/stats/summary")
 def get_shops_summary(db: Session = Depends(get_db)):

@@ -51,7 +51,7 @@ def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
             )
         
         # Kiểm tra password
-        if not check_password_hash(str(user.password), user_credentials.password):
+        if not check_password_hash(user.password, user_credentials.password):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Sai tài khoản hoặc mật khẩu"

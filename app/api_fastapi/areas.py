@@ -37,6 +37,10 @@ def read_areas(
     for area in areas:
         shop_count = db.query(func.count(Shop.id)).filter(Shop.area_id == area.id).scalar()
         area_dict = {**{col.name: getattr(area, col.name) for col in Area.__table__.columns}, "shop_count": shop_count}
+        # Map to Vietnamese field names for frontend
+        area_dict["ten_khu_vuc"] = area_dict.get("name")
+        area_dict["ma_khu_vuc"] = area_dict.get("code")
+        area_dict["loai_khu_vuc"] = area_dict.get("type")
         result.append(area_dict)
     return result
 
@@ -47,6 +51,10 @@ def read_area(area_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
     shop_count = db.query(func.count(Shop.id)).filter(Shop.area_id == area.id).scalar()
     area_dict = {**{col.name: getattr(area, col.name) for col in Area.__table__.columns}, "shop_count": shop_count}
+    # Map to Vietnamese field names for frontend
+    area_dict["ten_khu_vuc"] = area_dict.get("name")
+    area_dict["ma_khu_vuc"] = area_dict.get("code")
+    area_dict["loai_khu_vuc"] = area_dict.get("type")
     return area_dict
 
 @router.post("/", response_model=AreaOut)
