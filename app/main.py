@@ -20,6 +20,7 @@ from .api_fastapi import (
     auth, general_diary, areas, shops,
     customers_analytics, discount_codes, reports, schedules
 )
+from .migrations import run_migrations
 
 # Create FastAPI app
 app = FastAPI(
@@ -175,6 +176,9 @@ app.include_router(schedules.router, prefix="/api", tags=["schedules"])  # minim
 @app.on_event("startup")
 async def startup_event():
     """Khởi động application"""
+    # Run database migrations first
+    run_migrations()
+    
     # Ensure tables exist even in production (Render free plan has no pre-deploy)
     try:
         Base.metadata.create_all(bind=engine)
