@@ -30,8 +30,8 @@ class Account(Base):
     
     id = Column(Integer, primary_key=True)
     ten_tk = Column(String(100), nullable=False, index=True) # Tên khách hàng
-    tk_no = Column(String(20))
-    tk_co = Column(String(20))
+    ma_khach_hang = Column(String(20))  # Mã khách hàng
+    ngay_sinh = Column(Date)  # Ngày sinh khách hàng
     email = Column(String(120))
     so_dt = Column(String(20))
     dia_chi = Column(String(255))
@@ -49,8 +49,6 @@ class GeneralDiary(Base):
     ngay_nhap = Column(Date, nullable=False)
     so_hieu = Column(String(50), nullable=False)
     dien_giai = Column(String(255))
-    tk_no = Column(String(20))
-    tk_co = Column(String(20))
     so_luong_nhap = Column(Integer, default=0)
     so_luong_xuat = Column(Integer, default=0)
     so_tien = Column(Float, default=0.0)
@@ -117,9 +115,34 @@ class Invoice(Base):
     nguoi_mua = Column(String(100), nullable=False)
     tong_tien = Column(Float, nullable=False)
     trang_thai = Column(String(50), default='pending')
+    hinh_thuc_tt = Column(String(50))  # Hình thức thanh toán: Tiền mặt, MoMo, Banking
+    
+    # Relationship to invoice items
+    items = relationship("InvoiceItem", back_populates="invoice", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Invoice(so_hd='{self.so_hd}')>"
+
+
+class InvoiceItem(Base):
+    """Invoice item model for invoice details"""
+    __tablename__ = 'invoice_items'
+    
+    id = Column(Integer, primary_key=True)
+    invoice_id = Column(Integer, ForeignKey('invoices.id'), nullable=False)
+    product_id = Column(Integer, ForeignKey('products.id'), nullable=False)
+    product_code = Column(String(20), nullable=False)  # Store product code for reference
+    product_name = Column(String(100), nullable=False)  # Store product name for reference
+    so_luong = Column(Integer, nullable=False)
+    don_gia = Column(Float, nullable=False)
+    total_price = Column(Float, nullable=False)
+    
+    # Relationships
+    invoice = relationship("Invoice", back_populates="items")
+    product = relationship("Product")
+    
+    def __repr__(self):
+        return f"<InvoiceItem(invoice_id={self.invoice_id}, product_code='{self.product_code}', so_luong={self.so_luong})>"
 
 
 class Order(Base):
@@ -129,11 +152,12 @@ class Order(Base):
     id = Column(Integer, primary_key=True)
     ma_don_hang = Column(String(50), unique=True, nullable=False, index=True)
     thong_tin_kh = Column(String(255))
+    sp_banggia = Column(String(100))  # Mã sản phẩm hoặc mã bảng giá
     ngay_tao = Column(Date, nullable=False)
     so_luong = Column(Integer, default=1)
     tong_tien = Column(Float, default=0.0)
     ma_co_quan_thue = Column(String(50))
-    hinh_thuc_tt = Column(String(50))
+    # hinh_thuc_tt = Column(String(50))  # Removed - no longer used
     trang_thai = Column(String(50), default='pending')
     
     def __repr__(self):
@@ -248,3 +272,22 @@ class DiscountCode(Base):
     
     def __repr__(self):
         return f"<DiscountCode(code='{self.code}', name='{self.name}', type='{self.discount_type}')>"
+
+
+class Schedule(Base):
+    """Schedule model for employee work schedules"""
+    __tablename__ = 'schedules'
+    
+    id = Column(Integer, primary_key=True)
+    employee_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    work_date = Column(Date, nullable=False, index=True)
+    shift_type = Column(String(50), nullable=False)  # Ca 1, Ca 2, Ca 3, Ca sáng, Ca chiều, Ca tối
+    notes = Column(Text)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    # Relationship
+    employee = relationship("User")
+    
+    def __repr__(self):
+        return f"<Schedule(employee_id={self.employee_id}, work_date='{self.work_date}', shift_type='{self.shift_type}')>"

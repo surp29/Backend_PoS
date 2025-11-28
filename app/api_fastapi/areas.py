@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 from ..database import get_db
 from ..models import Area, Shop
 from ..schemas_fastapi import AreaCreate, AreaUpdate, AreaOut
+from ..services.general_diary import create_general_diary_entry
+from ..services.auth_helper import get_username_from_request
 
 router = APIRouter(prefix="/areas", tags=["areas"])
 
@@ -36,7 +38,9 @@ def read_areas(
     result = []
     for area in areas:
         shop_count = db.query(func.count(Shop.id)).filter(Shop.area_id == area.id).scalar()
-        area_dict = {**{col.name: getattr(area, col.name) for col in Area.__table__.columns}, "shop_count": shop_count}
+        # Use Pydantic schema for proper serialization
+        area_dict = AreaOut.model_validate(area).model_dump()
+        area_dict['shop_count'] = shop_count
         result.append(area_dict)
     return result
 
@@ -46,7 +50,8 @@ def read_area(area_id: int, db: Session = Depends(get_db)):
     if area is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
     shop_count = db.query(func.count(Shop.id)).filter(Shop.area_id == area.id).scalar()
-    area_dict = {**{col.name: getattr(area, col.name) for col in Area.__table__.columns}, "shop_count": shop_count}
+    area_dict = AreaOut.model_validate(area).model_dump()
+    area_dict['shop_count'] = shop_count
     return area_dict
 
 @router.post("/", response_model=AreaOut)
@@ -62,14 +67,19 @@ def create_new_area(area: AreaCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_area)
     shop_count = db.query(func.count(Shop.id)).filter(Shop.area_id == db_area.id).scalar()
-    area_dict = {**{col.name: getattr(db_area, col.name) for col in Area.__table__.columns}, "shop_count": shop_count}
+    area_dict = AreaOut.model_validate(db_area).model_dump()
+    area_dict['shop_count'] = shop_count
     return area_dict
 
 @router.put("/{area_id}", response_model=AreaOut)
-def update_existing_area(area_id: int, area: AreaUpdate, db: Session = Depends(get_db)):
+def update_existing_area(area_id: int, area: AreaUpdate, request: Request, db: Session = Depends(get_db)):
     db_area = db.query(Area).filter(Area.id == area_id).first()
     if db_area is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+    
+    # Lấy username từ token
+    username = get_username_from_request(request)
+    
     if area.code and area.code != db_area.code:
         existing_code = db.query(Area).filter(Area.code == area.code, Area.id != area_id).first()
         if existing_code:
@@ -80,22 +90,70 @@ def update_existing_area(area_id: int, area: AreaUpdate, db: Session = Depends(g
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Area name already exists")
     for field, value in area.dict(exclude_unset=True).items():
         setattr(db_area, field, value)
-    db.commit()
+    
+    db.flush()  # Flush để đảm bảo update được thực hiện
+    
+    # Ghi vào general_diary
+    try:
+        description_text = f"Sửa khu vực: {db_area.name} - Mã: {db_area.code}"
+        create_general_diary_entry(
+            db=db,
+            source="Area",
+            total_amount=0.0,
+            quantity_out=0,
+            quantity_in=0,
+            description=description_text[:255],
+            username=username
+        )
+        db.commit()
+    except Exception as diary_error:
+        from ..logger import log_error
+        log_error("UPDATE_AREA_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+        db.commit()  # Vẫn commit việc update khu vực
+    
     db.refresh(db_area)
     shop_count = db.query(func.count(Shop.id)).filter(Shop.area_id == db_area.id).scalar()
-    area_dict = {**{col.name: getattr(db_area, col.name) for col in Area.__table__.columns}, "shop_count": shop_count}
+    area_dict = AreaOut.model_validate(db_area).model_dump()
+    area_dict['shop_count'] = shop_count
     return area_dict
 
 @router.delete("/{area_id}")
-def delete_existing_area(area_id: int, db: Session = Depends(get_db)):
+def delete_existing_area(area_id: int, request: Request, db: Session = Depends(get_db)):
     db_area = db.query(Area).filter(Area.id == area_id).first()
     if db_area is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Area not found")
+    
+    # Lấy username từ token
+    username = get_username_from_request(request)
+    
     shop_count = db.query(func.count(Shop.id)).filter(Shop.area_id == area_id).scalar()
     if shop_count > 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Cannot delete area. It has {shop_count} shop(s). Please delete shops first.")
+    
+    # Lưu thông tin khu vực trước khi xóa
+    area_info = f"{db_area.name} - Mã: {db_area.code}"
+    
     db.delete(db_area)
-    db.commit()
+    db.flush()  # Flush để đảm bảo xóa được thực hiện
+    
+    # Ghi vào general_diary
+    try:
+        description_text = f"Xóa khu vực: {area_info}"
+        create_general_diary_entry(
+            db=db,
+            source="Area",
+            total_amount=0.0,
+            quantity_out=0,
+            quantity_in=0,
+            description=description_text[:255],
+            username=username
+        )
+        db.commit()
+    except Exception as diary_error:
+        from ..logger import log_error
+        log_error("DELETE_AREA_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+        db.commit()  # Vẫn commit việc xóa khu vực
+    
     return {"message": "Area deleted successfully"}
 
 @router.get("/{area_id}/shops")

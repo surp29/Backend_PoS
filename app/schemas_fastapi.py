@@ -67,14 +67,28 @@ class WarehouseOut(BaseModel):
     ma_kho: Optional[str]
     ten_kho: Optional[str]
     dia_chi: Optional[str]
-    so_luong_sp: Optional[int]
-    trang_thai: Optional[str]
     dien_thoai: Optional[str]
-    nhom_san_pham: Optional[str]
-    mo_ta: Optional[str]
+    ma_sp: Optional[str]
+    gia_nhap: Optional[float]
+    so_luong: Optional[int]
+    ghi_chu: Optional[str]
+    trang_thai: Optional[str]
+    # Legacy compatibility fields
+    so_luong_sp: Optional[int] = None
+    mo_ta: Optional[str] = None
+    nhom_san_pham: Optional[str] = None
 
     class Config:
         from_attributes = True
+        
+    def model_dump(self, **kwargs):
+        """Override to include computed legacy fields"""
+        data = super().model_dump(**kwargs)
+        if self.so_luong is not None:
+            data['so_luong_sp'] = self.so_luong
+        if self.ghi_chu is not None:
+            data['mo_ta'] = self.ghi_chu
+        return data
 
 
 class ProductGroupUpdate(BaseModel):
@@ -148,10 +162,29 @@ class WarehouseCreate(BaseModel):
     ten_kho: str
     dia_chi: str
     dien_thoai: Optional[str] = None
-    so_luong_sp: Optional[int] = 0
+    ma_sp: Optional[str] = None
+    gia_nhap: Optional[float] = 0.0
+    so_luong: Optional[int] = 0
+    so_luong_sp: Optional[int] = 0  # Compatibility field
     trang_thai: Optional[str] = 'Hoạt động'
     nhom_san_pham: Optional[str] = None
+    mo_ta: Optional[str] = None  # Compatibility field
+    ghi_chu: Optional[str] = None
+
+
+class WarehouseUpdate(BaseModel):
+    ma_kho: Optional[str] = None
+    ten_kho: Optional[str] = None
+    dia_chi: Optional[str] = None
+    dien_thoai: Optional[str] = None
+    so_luong_sp: Optional[int] = None
+    trang_thai: Optional[str] = None
+    nhom_san_pham: Optional[str] = None
     mo_ta: Optional[str] = None
+    ma_sp: Optional[str] = None
+    gia_nhap: Optional[float] = None
+    so_luong: Optional[int] = None
+    ghi_chu: Optional[str] = None
 
 
 # Users
@@ -195,13 +228,12 @@ class UserUpdate(BaseModel):
 class AccountOut(BaseModel):
     id: int
     ten_tk: Optional[str]
-    tk_no: Optional[str]
-    tk_co: Optional[str]
+    ma_khach_hang: Optional[str]
+    ngay_sinh: Optional[date]
     email: Optional[str]
     so_dt: Optional[str]
     dia_chi: Optional[str]
     trang_thai: Optional[bool]
-    total_spent: Optional[float] = 0.0
 
     class Config:
         from_attributes = True
@@ -209,25 +241,22 @@ class AccountOut(BaseModel):
 
 class AccountCreate(BaseModel):
     ten_tk: str
-    tk_no: Optional[str] = None
-    tk_co: Optional[str] = None
+    ma_khach_hang: Optional[str] = None
+    ngay_sinh: Optional[date] = None
     email: Optional[str] = None
     so_dt: Optional[str] = None
     dia_chi: Optional[str] = None
     trang_thai: Optional[bool] = True
-    total_spent: Optional[float] = 0.0
 
 
 class AccountUpdate(BaseModel):
     ten_tk: Optional[str] = None
-    tk_no: Optional[str] = None
-    tk_co: Optional[str] = None
+    ma_khach_hang: Optional[str] = None
+    ngay_sinh: Optional[date] = None
     email: Optional[str] = None
     so_dt: Optional[str] = None
     dia_chi: Optional[str] = None
     trang_thai: Optional[bool] = None
-    total_spent: Optional[float] = None
-    total_spent_increment: Optional[float] = None  # Để tăng total_spent thay vì set trực tiếp
 
 
 # Orders
@@ -240,7 +269,6 @@ class OrderOut(BaseModel):
     ma_co_quan_thue: Optional[str]
     so_luong: Optional[int]
     tong_tien: Optional[float]
-    hinh_thuc_tt: Optional[str]
     trang_thai: Optional[str]
 
     class Config:
@@ -255,7 +283,6 @@ class OrderCreate(BaseModel):
     ma_co_quan_thue: Optional[str] = None
     so_luong: Optional[int] = 1
     tong_tien: Optional[float] = 0
-    hinh_thuc_tt: Optional[str] = None
     trang_thai: Optional[str] = None
 
 
@@ -267,7 +294,6 @@ class OrderUpdate(BaseModel):
     ma_co_quan_thue: Optional[str] = None
     so_luong: Optional[int] = None
     tong_tien: Optional[float] = None
-    hinh_thuc_tt: Optional[str] = None
     trang_thai: Optional[str] = None
 
 
@@ -287,6 +313,30 @@ class InvoiceOut(BaseModel):
     nguoi_mua: Optional[str]
     tong_tien: Optional[float]
     trang_thai: Optional[str]
+    hinh_thuc_tt: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class InvoiceItemCreate(BaseModel):
+    product_id: int
+    product_code: str
+    product_name: str
+    so_luong: int
+    don_gia: float
+    total_price: float
+
+
+class InvoiceItemOut(BaseModel):
+    id: int
+    invoice_id: int
+    product_id: int
+    product_code: str
+    product_name: str
+    so_luong: int
+    don_gia: float
+    total_price: float
 
     class Config:
         from_attributes = True
@@ -298,6 +348,8 @@ class InvoiceCreate(BaseModel):
     nguoi_mua: str
     tong_tien: float
     trang_thai: Optional[str] = 'Đã thanh toán'
+    hinh_thuc_tt: Optional[str] = None
+    items: Optional[list[InvoiceItemCreate]] = []  # List of invoice items
 
 
 class InvoiceUpdate(BaseModel):
@@ -306,6 +358,7 @@ class InvoiceUpdate(BaseModel):
     nguoi_mua: Optional[str] = None
     tong_tien: Optional[float] = None
     trang_thai: Optional[str] = None
+    hinh_thuc_tt: Optional[str] = None
 
 
 # Area schemas
@@ -436,8 +489,6 @@ class GeneralDiaryCreate(BaseModel):
     ngay_nhap: Optional[date] = None
     so_hieu: Optional[str] = None
     dien_giai: Optional[str] = None
-    tk_no: Optional[str] = None
-    tk_co: Optional[str] = None
     so_luong_nhap: Optional[int] = 0
     so_luong_xuat: Optional[int] = 0
     so_tien: Optional[float] = 0
@@ -451,11 +502,36 @@ class GeneralDiaryOut(BaseModel):
     ngay_nhap: Optional[date] = None
     so_hieu: Optional[str] = None
     dien_giai: Optional[str] = None
-    tk_no: Optional[str] = None
-    tk_co: Optional[str] = None
     so_luong_nhap: Optional[int] = 0
     so_luong_xuat: Optional[int] = 0
     so_tien: Optional[float] = 0
 
     class Config:
         from_attributes = True
+
+
+# Schedules
+class ScheduleOut(BaseModel):
+    id: int
+    employee_id: int
+    work_date: date
+    shift_type: str
+    notes: Optional[str] = None
+    employee_name: Optional[str] = None  # For display purposes
+    
+    class Config:
+        from_attributes = True
+
+
+class ScheduleCreate(BaseModel):
+    employee_id: int
+    work_date: date
+    shift_type: str
+    notes: Optional[str] = None
+
+
+class ScheduleUpdate(BaseModel):
+    employee_id: Optional[int] = None
+    work_date: Optional[date] = None
+    shift_type: Optional[str] = None
+    notes: Optional[str] = None

@@ -14,14 +14,25 @@ def create_order_service(payload, db: Session):
             is_product = True
         else:
             is_action = True
-    computed_total = payload.tong_tien or 0
-    if payload.so_luong:
+    # Ưu tiên sử dụng tong_tien từ payload nếu có và > 0
+    computed_total = 0
+    if payload.tong_tien and payload.tong_tien > 0:
+        computed_total = float(payload.tong_tien)
+    elif payload.so_luong:
         if is_product and product:
-            unit_price = float(getattr(product, 'gia_chung', 0) or 0)
+            # Try gia_ban first, then gia_chung
+            unit_price = float(getattr(product, 'gia_ban', 0) or 0)
+            if unit_price == 0:
+                unit_price = float(getattr(product, 'gia_chung', 0) or 0)
             computed_total = unit_price * int(payload.so_luong or 0)
         elif is_action:
-            unit_price = float(payload.tong_tien or 0) / max(int(payload.so_luong or 1), 1)
-            computed_total = unit_price * int(payload.so_luong or 0)
+            # Với hành động, nếu có tong_tien thì dùng, nếu không thì tính từ so_luong
+            if payload.tong_tien and payload.tong_tien > 0:
+                computed_total = float(payload.tong_tien)
+            else:
+                # Fallback: tính từ giá mặc định nếu có
+                unit_price = float(payload.tong_tien or 0) / max(int(payload.so_luong or 1), 1)
+                computed_total = unit_price * int(payload.so_luong or 0)
     if is_product and product and payload.so_luong:
         current_qty = int(getattr(product, 'so_luong', 0) or 0)
         if current_qty < payload.so_luong:

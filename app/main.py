@@ -18,7 +18,7 @@ from .api_fastapi import (
     products, prices, orders, invoices, users,
     accounts, product_groups, warehouses,
     auth, general_diary, areas, shops,
-    customers_analytics, discount_codes, reports, schedules
+    customers_analytics, discount_codes, reports, schedules, chatbot
 )
 
 # Create FastAPI app
@@ -37,10 +37,11 @@ if Config.ENV == 'development':
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5000", "*"], # Cho phép local FE truy cập toàn bộ API
+    allow_origins=["http://localhost:5000", "http://127.0.0.1:5000", "*"], # Cho phép local FE truy cập toàn bộ API
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 
@@ -82,7 +83,7 @@ async def log_requests_middleware(request: Request, call_next):
             error=e
         )
         
-        return JSONResponse(
+        response = JSONResponse(
             status_code=500,
             content={
                 "error": "Internal Server Error",
@@ -90,6 +91,11 @@ async def log_requests_middleware(request: Request, call_next):
                 "path": request.url.path
             }
         )
+        # Ensure CORS headers are added
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
 
 
 # Exception handlers
@@ -102,7 +108,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         error=exc
     )
     
-    return JSONResponse(
+    response = JSONResponse(
         status_code=422,
         content={
             "error": "Validation Error",
@@ -110,6 +116,11 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
             "path": request.url.path
         }
     )
+    # Ensure CORS headers are added
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 
 @app.exception_handler(StarletteHTTPException)
@@ -120,7 +131,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         message=f"HTTP {exc.status_code} ở {request.url.path}: {exc.detail}"
     )
     
-    return JSONResponse(
+    response = JSONResponse(
         status_code=exc.status_code,
         content={
             "error": exc.detail,
@@ -128,6 +139,11 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
             "path": request.url.path
         }
     )
+    # Ensure CORS headers are added
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 
 @app.exception_handler(Exception)
@@ -139,7 +155,7 @@ async def general_exception_handler(request: Request, exc: Exception):
         error=exc
     )
     
-    return JSONResponse(
+    response = JSONResponse(
         status_code=500,
         content={
             "error": "Internal Server Error",
@@ -148,6 +164,11 @@ async def general_exception_handler(request: Request, exc: Exception):
             "path": request.url.path
         }
     )
+    # Ensure CORS headers are added
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # Mount static files
 if os.path.exists("static"):
@@ -171,6 +192,7 @@ app.include_router(customers_analytics.router, prefix="/api", tags=["customers-a
 app.include_router(discount_codes.router, prefix="/api/discount-codes", tags=["discount-codes"])
 app.include_router(reports.router, prefix="/api", tags=["reports"])  # minimal compatibility
 app.include_router(schedules.router, prefix="/api", tags=["schedules"])  # minimal compatibility
+app.include_router(chatbot.router, prefix="/api", tags=["chatbot"])
 
 @app.on_event("startup")
 async def startup_event():
@@ -178,6 +200,7 @@ async def startup_event():
     # Ensure tables exist even in production (Render free plan has no pre-deploy)
     try:
         Base.metadata.create_all(bind=engine)
+        log_info("STARTUP", "🗄️ Đã kiểm tra và tạo các bảng database.")
     except Exception as _e:
         log_warning("STARTUP", f"Không thể tạo bảng tự động: {_e}")
     # Ensure default admin for free plan where pre-deploy is unavailable

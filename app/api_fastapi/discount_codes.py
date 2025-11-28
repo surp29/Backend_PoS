@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime, date
@@ -8,6 +8,8 @@ from ..models import DiscountCode
 from ..schemas_fastapi import DiscountCodeCreate, DiscountCodeUpdate, DiscountCodeOut
 from ..logger import log_info, log_success, log_error, log_warning
 from ..services.discounts import is_expired, is_active, can_use_discount, compute_discount_amount
+from ..services.general_diary import create_general_diary_entry
+from ..services.auth_helper import get_username_from_request
 
 router = APIRouter(tags=["discount-codes"])
 
@@ -46,7 +48,7 @@ def get_discount_codes(
     codes = query.offset(skip).limit(limit).all()
     log_success("DISCOUNT_CODES", f"Retrieved {len(codes)} discount codes")
     
-    return codes
+    return [DiscountCodeOut.model_validate(c).model_dump() for c in codes]
 
 
 @router.get("/{code_id}", response_model=DiscountCodeOut)
@@ -63,7 +65,7 @@ def get_discount_code(code_id: int, db: Session = Depends(get_db)):
         )
     
     log_success("DISCOUNT_CODES", f"Retrieved discount code: {code.code}")
-    return code
+    return DiscountCodeOut.model_validate(code).model_dump()
 
 
 @router.post("/", response_model=DiscountCodeOut)
@@ -152,6 +154,7 @@ def create_discount_code(code_data: DiscountCodeCreate, db: Session = Depends(ge
 def update_discount_code(
     code_id: int,
     code_data: DiscountCodeUpdate,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """Cập nhật mã giảm giá"""
@@ -228,8 +231,29 @@ def update_discount_code(
     else:
         db_code.status = 'active'
     
+    # Lấy username từ token
+    username = get_username_from_request(request)
+    
     try:
-        db.commit()
+        db.flush()  # Flush để đảm bảo update được thực hiện
+        
+        # Ghi vào general_diary
+        try:
+            description_text = f"Sửa mã giảm giá: {db_code.code}"
+            create_general_diary_entry(
+                db=db,
+                source="DiscountCode",
+                total_amount=0.0,
+                quantity_out=0,
+                quantity_in=0,
+                description=description_text[:255],
+                username=username
+            )
+            db.commit()
+        except Exception as diary_error:
+            log_error("UPDATE_DISCOUNT_CODE_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+            db.commit()  # Vẫn commit việc update mã giảm giá
+        
         db.refresh(db_code)
         log_success("DISCOUNT_CODES", f"Updated discount code: {db_code.code} (ID: {db_code.id})")
         return db_code
@@ -243,7 +267,7 @@ def update_discount_code(
 
 
 @router.delete("/{code_id}")
-def delete_discount_code(code_id: int, db: Session = Depends(get_db)):
+def delete_discount_code(code_id: int, request: Request, db: Session = Depends(get_db)):
     """Xóa mã giảm giá"""
     log_info("DISCOUNT_CODES", f"Deleting discount code ID: {code_id}")
     
@@ -255,9 +279,33 @@ def delete_discount_code(code_id: int, db: Session = Depends(get_db)):
             detail="Mã giảm giá không tồn tại"
         )
     
+    # Lấy username từ token
+    username = get_username_from_request(request)
+    
+    # Lưu thông tin mã giảm giá trước khi xóa
+    code_info = db_code.code
+    
     try:
         db.delete(db_code)
-        db.commit()
+        db.flush()  # Flush để đảm bảo xóa được thực hiện
+        
+        # Ghi vào general_diary
+        try:
+            description_text = f"Xóa mã giảm giá: {code_info}"
+            create_general_diary_entry(
+                db=db,
+                source="DiscountCode",
+                total_amount=0.0,
+                quantity_out=0,
+                quantity_in=0,
+                description=description_text[:255],
+                username=username
+            )
+            db.commit()
+        except Exception as diary_error:
+            log_error("DELETE_DISCOUNT_CODE_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+            db.commit()  # Vẫn commit việc xóa mã giảm giá
+        
         log_success("DISCOUNT_CODES", f"Deleted discount code: {db_code.code} (ID: {code_id})")
         return {"message": "Xóa mã giảm giá thành công"}
     except Exception as e:

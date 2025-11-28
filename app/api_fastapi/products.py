@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -7,6 +7,8 @@ from ..models import Product, ProductGroup, OrderItem
 from ..schemas_fastapi import ProductOut, ProductCreate, ProductUpdate
 from ..logger import log_info, log_success, log_error, log_warning
 from ..services.products import save_uploaded_file, validate_product_fields
+from ..services.general_diary import create_general_diary_entry
+from ..services.auth_helper import get_username_from_request
 import os
 from typing import Optional
 
@@ -66,7 +68,7 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
     product = db.query(Product).get(product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Không tìm thấy sản phẩm")
-    return product
+    return ProductOut.model_validate(product).model_dump()
 
 
 @router.get("/search")
@@ -112,6 +114,24 @@ async def create_product(
         db.add(p)
         db.commit()
         db.refresh(p)
+        
+        # Tự động ghi vào General Diary
+        try:
+            description = f"Thêm sản phẩm mới: {code} - {name}"
+            create_general_diary_entry(
+                db=db,
+                source="Product",
+                total_amount=0.0,
+                quantity_out=0,
+                quantity_in=quantity or 0,
+                description=description
+            )
+            db.commit()
+        except Exception as diary_error:
+            # Log lỗi nhưng không làm gián đoạn việc tạo product
+            log_error("CREATE_PRODUCT_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+            # Không rollback vì product đã được tạo thành công
+        
         log_success("CREATE_PRODUCT", f"Tạo sản phẩm thành công: {code} - {name} (ID: {p.id})")
         return {"success": True, "id": p.id}
     except HTTPException:
@@ -124,6 +144,7 @@ async def create_product(
 @router.put("/{product_id}")
 async def update_product(
     product_id: int,
+    request: Request,
     code: Optional[str] = Form(None),
     name: Optional[str] = Form(None),
     group: Optional[str] = Form(None),
@@ -138,6 +159,9 @@ async def update_product(
     p = db.query(Product).get(product_id)
     if not p:
         raise HTTPException(status_code=404, detail="Không tìm thấy sản phẩm")
+    
+    # Lấy username từ token
+    username = get_username_from_request(request)
     
     # Update fields
     if code is not None:
@@ -164,7 +188,25 @@ async def update_product(
             p.image_url = image_url
             log_info("UPDATE_PRODUCT", f"Đã cập nhật ảnh: {image_url}")
     
-    db.commit()
+    db.flush()  # Flush để đảm bảo update được thực hiện
+    
+    # Ghi vào general_diary
+    try:
+        description_text = f"Sửa sản phẩm: {p.ma_sp} - {p.ten_sp}"
+        create_general_diary_entry(
+            db=db,
+            source="Product",
+            total_amount=0.0,
+            quantity_out=0,
+            quantity_in=0,
+            description=description_text[:255],
+            username=username
+        )
+        db.commit()
+    except Exception as diary_error:
+        log_error("UPDATE_PRODUCT_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+        db.commit()  # Vẫn commit việc update sản phẩm
+    
     db.refresh(p)
     
     log_success("UPDATE_PRODUCT", f"Cập nhật sản phẩm thành công: {p.ma_sp} - {p.ten_sp} (ID: {product_id})")
@@ -172,18 +214,44 @@ async def update_product(
 
 
 @router.delete("/{product_id}")
-def delete_product(product_id: int, db: Session = Depends(get_db)):
+def delete_product(product_id: int, request: Request, db: Session = Depends(get_db)):
     p = db.query(Product).get(product_id)
     if not p:
         raise HTTPException(status_code=404, detail="Không tìm thấy sản phẩm")
+    
+    # Lấy username từ token
+    username = get_username_from_request(request)
+    
+    # Lưu thông tin sản phẩm trước khi xóa
+    product_info = f"{p.ma_sp} - {p.ten_sp}"
+    
     # Xóa các bản ghi phụ thuộc nếu có (chi tiết đơn hàng)
     # Không còn liên kết với bảng giá
     try:
         db.query(OrderItem).filter(OrderItem.product_id == product_id).delete()
     except Exception:
         pass
+    
     db.delete(p)
-    db.commit()
+    db.flush()  # Flush để đảm bảo xóa được thực hiện
+    
+    # Ghi vào general_diary
+    try:
+        description_text = f"Xóa sản phẩm: {product_info}"
+        create_general_diary_entry(
+            db=db,
+            source="Product",
+            total_amount=0.0,
+            quantity_out=0,
+            quantity_in=0,
+            description=description_text[:255],
+            username=username
+        )
+        db.commit()
+    except Exception as diary_error:
+        log_error("DELETE_PRODUCT_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+        db.commit()  # Vẫn commit việc xóa sản phẩm
+    
     return {"success": True}
 
 

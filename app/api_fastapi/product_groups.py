@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import ProductGroup
+from ..services.general_diary import create_general_diary_entry
+from ..services.auth_helper import get_username_from_request
+from ..logger import log_error
 
 router = APIRouter(prefix="/product-groups", tags=["product_groups"])
 
@@ -60,9 +63,12 @@ def create_product_group(payload: dict, db: Session = Depends(get_db)):
 
 
 @router.put("/{group_id}")
-def update_product_group(group_id: int, payload: dict, db: Session = Depends(get_db)):
+def update_product_group(group_id: int, payload: dict, request: Request, db: Session = Depends(get_db)):
     """Cập nhật nhóm sản phẩm (cập nhật tất cả sản phẩm trong nhóm)"""
     from ..models import Product
+    
+    # Lấy username từ token
+    username = get_username_from_request(request)
     
     new_name = (payload.get("ten_nhom") or "").strip()
     if not new_name:
@@ -73,25 +79,68 @@ def update_product_group(group_id: int, payload: dict, db: Session = Depends(get
     old_name = payload.get("old_ten_nhom", "")
     if old_name:
         updated = db.query(Product).filter(Product.nhom_sp == old_name).update({Product.nhom_sp: new_name})
-        db.commit()
+        db.flush()  # Flush để đảm bảo update được thực hiện
+        
+        # Ghi vào general_diary
+        try:
+            description_text = f"Sửa nhóm sản phẩm: {old_name} -> {new_name} - Đã cập nhật {updated} sản phẩm"
+            create_general_diary_entry(
+                db=db,
+                source="ProductGroup",
+                total_amount=0.0,
+                quantity_out=0,
+                quantity_in=0,
+                description=description_text[:255],
+                username=username
+            )
+            db.commit()
+        except Exception as diary_error:
+            log_error("UPDATE_PRODUCT_GROUP_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+            db.commit()  # Vẫn commit việc update nhóm sản phẩm
+        
         return {"success": True, "updated_count": updated}
     
     return {"success": True}
 
 
 @router.delete("/{group_id}")
-def delete_product_group(group_id: int, db: Session = Depends(get_db)):
+def delete_product_group(group_id: int, request: Request, db: Session = Depends(get_db)):
     """Xóa nhóm sản phẩm (xóa tất cả sản phẩm trong nhóm)"""
     from ..models import Product
+    
+    # Lấy username từ token
+    username = get_username_from_request(request)
     
     # Cần biết tên nhóm để xóa
     group_name = db.query(Product.nhom_sp).distinct().filter(Product.nhom_sp.isnot(None)).all()
     if group_id <= len(group_name):
         nhom_sp = group_name[group_id - 1][0]  # Lấy tên nhóm theo ID
         if nhom_sp:
+            # Đếm số sản phẩm trước khi xóa
+            products_to_delete = db.query(Product).filter(Product.nhom_sp == nhom_sp).all()
+            deleted_count = len(products_to_delete)
+            
             # Xóa tất cả sản phẩm trong nhóm này
             deleted = db.query(Product).filter(Product.nhom_sp == nhom_sp).delete()
-            db.commit()
+            db.flush()  # Flush để đảm bảo xóa được thực hiện
+            
+            # Ghi vào general_diary
+            try:
+                description_text = f"Xóa nhóm sản phẩm: {nhom_sp} - Đã xóa {deleted_count} sản phẩm"
+                create_general_diary_entry(
+                    db=db,
+                    source="ProductGroup",
+                    total_amount=0.0,
+                    quantity_out=0,
+                    quantity_in=0,
+                    description=description_text[:255],
+                    username=username
+                )
+                db.commit()
+            except Exception as diary_error:
+                log_error("DELETE_PRODUCT_GROUP_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+                db.commit()  # Vẫn commit việc xóa nhóm sản phẩm
+            
             return {"success": True, "deleted_count": deleted}
     
     return {"success": True}

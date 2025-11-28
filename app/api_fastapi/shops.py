@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from typing import List, Optional
 from ..database import get_db
 from ..models import Shop, Area
 from ..schemas_fastapi import ShopCreate, ShopUpdate, ShopOut
+from ..services.general_diary import create_general_diary_entry
+from ..services.auth_helper import get_username_from_request
 
 router = APIRouter(prefix="/shops", tags=["shops"])
 
@@ -33,7 +35,9 @@ def read_shops(
     result = []
     for shop in shops:
         area = db.query(Area).filter(Area.id == shop.area_id).first()
-        shop_dict = {**{col.name: getattr(shop, col.name) for col in Shop.__table__.columns}, "area_name": area.name if area else None}
+        # Use Pydantic schema for proper serialization
+        shop_dict = ShopOut.model_validate(shop).model_dump()
+        shop_dict['area_name'] = area.name if area else None
         result.append(shop_dict)
     return result
 
@@ -43,7 +47,8 @@ def read_shop(shop_id: int, db: Session = Depends(get_db)):
     if shop is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
     area = db.query(Area).filter(Area.id == shop.area_id).first()
-    shop_dict = {**{col.name: getattr(shop, col.name) for col in Shop.__table__.columns}, "area_name": area.name if area else None}
+    shop_dict = ShopOut.model_validate(shop).model_dump()
+    shop_dict['area_name'] = area.name if area else None
     return shop_dict
 
 @router.post("/", response_model=ShopOut)
@@ -61,14 +66,19 @@ def create_new_shop(shop: ShopCreate, db: Session = Depends(get_db)):
     db.add(db_shop)
     db.commit()
     db.refresh(db_shop)
-    shop_dict = {**{col.name: getattr(db_shop, col.name) for col in Shop.__table__.columns}, "area_name": area.name}
+    shop_dict = ShopOut.model_validate(db_shop).model_dump()
+    shop_dict['area_name'] = area.name
     return shop_dict
 
 @router.put("/{shop_id}", response_model=ShopOut)
-def update_existing_shop(shop_id: int, shop: ShopUpdate, db: Session = Depends(get_db)):
+def update_existing_shop(shop_id: int, shop: ShopUpdate, request: Request, db: Session = Depends(get_db)):
     db_shop = db.query(Shop).filter(Shop.id == shop_id).first()
     if db_shop is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    
+    # Lấy username từ token
+    username = get_username_from_request(request)
+    
     if shop.code and shop.code != db_shop.code:
         existing_code = db.query(Shop).filter(Shop.code == shop.code, Shop.id != shop_id).first()
         if existing_code:
@@ -83,19 +93,66 @@ def update_existing_shop(shop_id: int, shop: ShopUpdate, db: Session = Depends(g
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Area not found")
     for field, value in shop.dict(exclude_unset=True).items():
         setattr(db_shop, field, value)
-    db.commit()
+    
+    db.flush()  # Flush để đảm bảo update được thực hiện
+    
+    # Ghi vào general_diary
+    try:
+        description_text = f"Sửa shop: {db_shop.name} - Mã: {db_shop.code}"
+        create_general_diary_entry(
+            db=db,
+            source="Shop",
+            total_amount=0.0,
+            quantity_out=0,
+            quantity_in=0,
+            description=description_text[:255],
+            username=username
+        )
+        db.commit()
+    except Exception as diary_error:
+        from ..logger import log_error
+        log_error("UPDATE_SHOP_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+        db.commit()  # Vẫn commit việc update shop
+    
     db.refresh(db_shop)
     area = db.query(Area).filter(Area.id == db_shop.area_id).first()
-    shop_dict = {**{col.name: getattr(db_shop, col.name) for col in Shop.__table__.columns}, "area_name": area.name if area else None}
+    shop_dict = ShopOut.model_validate(db_shop).model_dump()
+    shop_dict['area_name'] = area.name if area else None
     return shop_dict
 
 @router.delete("/{shop_id}")
-def delete_existing_shop(shop_id: int, db: Session = Depends(get_db)):
+def delete_existing_shop(shop_id: int, request: Request, db: Session = Depends(get_db)):
     db_shop = db.query(Shop).filter(Shop.id == shop_id).first()
     if db_shop is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shop not found")
+    
+    # Lấy username từ token
+    username = get_username_from_request(request)
+    
+    # Lưu thông tin shop trước khi xóa
+    shop_info = f"{db_shop.name} - Mã: {db_shop.code}"
+    
     db.delete(db_shop)
-    db.commit()
+    db.flush()  # Flush để đảm bảo xóa được thực hiện
+    
+    # Ghi vào general_diary
+    try:
+        description_text = f"Xóa shop: {shop_info}"
+        create_general_diary_entry(
+            db=db,
+            source="Shop",
+            total_amount=0.0,
+            quantity_out=0,
+            quantity_in=0,
+            description=description_text[:255],
+            username=username
+        )
+        db.commit()
+    except Exception as diary_error:
+        from ..logger import log_error
+        log_error("DELETE_SHOP_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+        db.commit()  # Vẫn commit việc xóa shop
+    
     return {"message": "Shop deleted successfully"}
 
 @router.get("/by-area/{area_id}")

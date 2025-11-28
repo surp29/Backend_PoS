@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models import Order, Product, Account
+from ..models import Order, OrderItem, Product, Account, Warehouse
 from sqlalchemy import or_
 from ..schemas_fastapi import OrderOut, OrderCreate, OrderUpdate
 from ..logger import log_info, log_success, log_error, log_warning
 from fastapi import Body
 from ..services.orders import create_order_service
+from ..services.general_diary import create_general_diary_entry
+from ..services.auth_helper import get_username_from_request
 
 
 def is_cancelled(status: str | None) -> bool:
@@ -28,22 +30,28 @@ def check_duplicate(ma_don_hang: str = Query(..., description="Mã đơn hàng c
 
 @router.get("/", response_model=list[OrderOut])
 def list_orders(db: Session = Depends(get_db)):
-    return db.query(Order).all()
-
-
-@router.get("/{order_id}", response_model=OrderOut)
-def get_order(order_id: int, db: Session = Depends(get_db)):
-    o = db.query(Order).get(order_id)
-    if not o:
-        raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng")
-    return o
+    orders = db.query(Order).all()
+    return [OrderOut.model_validate(o).model_dump() for o in orders]
 
 
 @router.get("/search")
-def search_orders(customer_id: int | None = None, q: str | None = None, db: Session = Depends(get_db)):
+def search_orders(customer_id: int | None = None, customer_name: str | None = None, q: str | None = None, db: Session = Depends(get_db)):
     query = db.query(Order)
+    
+    log_info("SEARCH_ORDERS", f"Search params: customer_id={customer_id}, customer_name={customer_name}, q={q}")
+    
+    # Tìm theo customer_id hoặc customer_name
+    customer_filters = []
+    
+    # Nếu có customer_name, ưu tiên tìm theo tên trực tiếp
+    if customer_name:
+        customer_name_clean = (customer_name or '').strip()
+        if customer_name_clean and customer_name_clean != 'Khách vãng lai':
+            customer_filters.append(Order.thong_tin_kh.ilike(f"%{customer_name_clean}%"))
+            log_info("SEARCH_ORDERS", f"Added customer_name filter: {customer_name_clean}")
+    
+    # Nếu có customer_id, map id -> thông tin tài khoản và lọc theo thong_tin_kh
     if customer_id is not None:
-        # Map id -> thông tin tài khoản và lọc linh hoạt theo thong_tin_kh
         acc = None
         try:
             acc = db.query(Account).get(int(customer_id))
@@ -51,30 +59,49 @@ def search_orders(customer_id: int | None = None, q: str | None = None, db: Sess
             acc = None
         if acc:
             name = (acc.ten_tk or '').strip()
-            tk_no = (acc.tk_no or '').strip()
-            tk_co = (acc.tk_co or '').strip()
-            composite = f"{tk_no} - {tk_co} - {name}".strip()
-            patterns = [
-                Order.thong_tin_kh.ilike(f"%{name}%") if name else None,
-                Order.thong_tin_kh.ilike(f"%{composite}%") if composite else None,
-                Order.thong_tin_kh.ilike(f"%{tk_no}%") if tk_no else None,
-                Order.thong_tin_kh.ilike(f"%{tk_co}%") if tk_co else None,
-            ]
-            patterns = [p for p in patterns if p is not None]
-            if patterns:
-                query = query.filter(or_(*patterns))
+            ma_kh = (acc.ma_khach_hang or '').strip()
+            log_info("SEARCH_ORDERS", f"Found account: id={acc.id}, ten_tk={name}, ma_khach_hang={ma_kh}")
+            if name:
+                customer_filters.append(Order.thong_tin_kh.ilike(f"%{name}%"))
+                log_info("SEARCH_ORDERS", f"Added account name filter: {name}")
+            if ma_kh:
+                customer_filters.append(Order.thong_tin_kh.ilike(f"%{ma_kh}%"))
+                log_info("SEARCH_ORDERS", f"Added account code filter: {ma_kh}")
+        else:
+            log_warning("SEARCH_ORDERS", f"Account not found for customer_id={customer_id}")
+    
+    # Áp dụng filter khách hàng (OR logic - tìm theo bất kỳ điều kiện nào khớp)
+    if customer_filters:
+        query = query.filter(or_(*customer_filters))
+        log_info("SEARCH_ORDERS", f"Applied {len(customer_filters)} customer filters")
+    else:
+        log_warning("SEARCH_ORDERS", "No customer filters applied")
+    
+    # Tìm kiếm theo query string nếu có
     if q:
         ql = f"%{q}%"
         query = query.filter((Order.ma_don_hang.ilike(ql)) | (Order.trang_thai.ilike(ql)))
-    # Chỉ trả về đơn hàng Hoàn thành
-    query = query.filter(Order.trang_thai.ilike('%Hoàn thành%'))
+    
+    # Chỉ trả về đơn hàng Hoàn thành (hỗ trợ nhiều format: hoan_thanh, Hoàn thành, HOÀN THÀNH)
+    # Trong database, trạng thái được lưu là 'hoan_thanh' (chữ thường, không dấu)
+    query = query.filter(
+        or_(
+            Order.trang_thai.ilike('%hoan_thanh%'),
+            Order.trang_thai.ilike('%Hoàn thành%'),
+            Order.trang_thai.ilike('%HOÀN THÀNH%'),
+            Order.trang_thai.ilike('%hoàn thành%'),
+            Order.trang_thai.ilike('%hoan thanh%')
+        )
+    )
+    
     results = query.order_by(Order.id.desc()).all()
+    log_info("SEARCH_ORDERS", f"Found {len(results)} completed orders")
     out = []
     for o in results:
         # xác định loại SP dựa trên sp_banggia và bảng products
         loai = 'Khác'
-        if o.sp_banggia or None:
-            p = db.query(Product).filter(Product.ma_sp == o.sp_banggia or '').first()
+        if o.sp_banggia:
+            p = db.query(Product).filter(Product.ma_sp == o.sp_banggia).first()
             loai = 'Sản phẩm' if p is not None else 'Hành động (Bảng giá)'
         out.append({
             'id': o.id,
@@ -87,11 +114,29 @@ def search_orders(customer_id: int | None = None, q: str | None = None, db: Sess
     return out
 
 
+@router.get("/{order_id}", response_model=OrderOut)
+def get_order(order_id: int, db: Session = Depends(get_db)):
+    o = db.query(Order).get(order_id)
+    if not o:
+        raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng")
+    return OrderOut.model_validate(o).model_dump()
+
+
 @router.post("/")
 def create_order(payload: OrderCreate, db: Session = Depends(get_db)):
     log_info("CREATE_ORDER", f"Tạo đơn hàng mới: {payload.ma_don_hang} - Khách hàng: {payload.thong_tin_kh}")
     log_info("CREATE_ORDER", f"Payload details: sp_banggia={payload.sp_banggia}, so_luong={payload.so_luong}, tong_tien={payload.tong_tien}")
     try:
+        # Validate required fields
+        if not payload.ma_don_hang or not payload.ma_don_hang.strip():
+            raise HTTPException(status_code=400, detail="Mã đơn hàng không được để trống")
+        if not payload.thong_tin_kh or not payload.thong_tin_kh.strip():
+            raise HTTPException(status_code=400, detail="Thông tin khách hàng không được để trống")
+        
+        # Set default ngay_tao if not provided
+        from datetime import date
+        ngay_tao = payload.ngay_tao if payload.ngay_tao else date.today()
+        
         service_res = create_order_service(payload, db)
         is_product = service_res['is_product']
         is_action = service_res['is_action']
@@ -109,35 +154,68 @@ def create_order(payload: OrderCreate, db: Session = Depends(get_db)):
             ma_don_hang=payload.ma_don_hang,
             thong_tin_kh=payload.thong_tin_kh,
             sp_banggia=payload.sp_banggia,
-            ngay_tao=payload.ngay_tao,
+            ngay_tao=ngay_tao,
             ma_co_quan_thue=payload.ma_co_quan_thue,
-            so_luong=payload.so_luong,
+            so_luong=payload.so_luong or 1,
             tong_tien=computed_total,
-            hinh_thuc_tt=payload.hinh_thuc_tt,
-            trang_thai=payload.trang_thai,
+            trang_thai=payload.trang_thai or 'cho_xu_ly',
         )
         db.add(o)
         db.commit()
         db.refresh(o)
         # Trừ kho nếu là sản phẩm
+        quantity_out = 0
         if is_product and product and payload.so_luong:
             current_qty = int(getattr(product, 'so_luong', 0) or 0)
-            new_qty = max(current_qty - int(payload.so_luong or 0), 0)
+            quantity_out = int(payload.so_luong or 0)
+            new_qty = max(current_qty - quantity_out, 0)
             setattr(product, 'so_luong', new_qty)
             setattr(product, 'trang_thai', 'Còn hàng' if new_qty > 0 else 'Hết hàng')
+            
+            # Cập nhật warehouse nếu có
+            warehouse = db.query(Warehouse).filter(Warehouse.ma_sp == payload.sp_banggia).first()
+            if warehouse:
+                current_wh_qty = warehouse.so_luong or 0
+                new_wh_qty = max(0, current_wh_qty - quantity_out)
+                warehouse.so_luong = new_wh_qty
+                warehouse.trang_thai = 'Còn hàng' if new_wh_qty > 0 else 'Hết hàng'
+            
             db.commit()
             log_success("CREATE_ORDER", f"Đã trừ số lượng sản phẩm {payload.sp_banggia}: {new_qty} còn lại")
+        
+        # Tự động ghi vào General Diary
+        try:
+            sp_banggia_display = payload.sp_banggia if payload.sp_banggia else "N/A"
+            description = f"Đơn hàng {payload.ma_don_hang} - Khách hàng: {payload.thong_tin_kh} - Sản phẩm: {sp_banggia_display}"
+            create_general_diary_entry(
+                db=db,
+                source="Order",
+                total_amount=computed_total or 0.0,
+                quantity_out=quantity_out,
+                quantity_in=0,
+                description=description
+            )
+            db.commit()
+        except Exception as diary_error:
+            # Log lỗi nhưng không làm gián đoạn việc tạo order
+            log_error("CREATE_ORDER_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+            # Không rollback vì order đã được tạo thành công
+        
         log_success("CREATE_ORDER", f"Tạo đơn hàng thành công: {payload.ma_don_hang} - Tổng tiền: {computed_total:,.0f} VND")
         return {"success": True, "id": o.id}
     except HTTPException:
         raise
     except Exception as e:
-        log_error("CREATE_ORDER", f"Lỗi khi tạo đơn hàng {payload.ma_don_hang}", error=e)
+        import traceback
+        error_trace = traceback.format_exc()
+        log_error("CREATE_ORDER", f"Lỗi khi tạo đơn hàng {payload.ma_don_hang}: {str(e)}", error=e)
+        log_error("CREATE_ORDER", f"Traceback: {error_trace}")
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Lỗi khi tạo đơn hàng: {str(e)}")
 
 
 @router.put("/{order_id}")
-def update_order(order_id: int, payload: OrderUpdate, db: Session = Depends(get_db)):
+def update_order(order_id: int, payload: OrderUpdate, request: Request, db: Session = Depends(get_db)):
     o = db.query(Order).get(order_id)
     if not o:
         raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng")
@@ -205,24 +283,31 @@ def update_order(order_id: int, payload: OrderUpdate, db: Session = Depends(get_
     if payload.ngay_tao is not None: o.ngay_tao = payload.ngay_tao
     if payload.ma_co_quan_thue is not None: o.ma_co_quan_thue = payload.ma_co_quan_thue
     if payload.so_luong is not None: o.so_luong = payload.so_luong
-    if payload.hinh_thuc_tt is not None: o.hinh_thuc_tt = payload.hinh_thuc_tt
     if payload.trang_thai is not None: o.trang_thai = payload.trang_thai
     
-    # Tính lại tổng tiền nếu đơn không bị hủy
-    if new_quantity is not None and not is_cancelled(new_status):
+    # Tính lại tổng tiền - ưu tiên tong_tien từ payload nếu có và > 0
+    if payload.tong_tien is not None and payload.tong_tien > 0:
+        # Nếu payload có tong_tien và > 0, sử dụng giá trị đó
+        o.tong_tien = float(payload.tong_tien)
+    elif new_quantity is not None and not is_cancelled(new_status):
+        # Nếu không có tong_tien từ payload, tính toán từ sản phẩm/số lượng
         if new_is_product and new_product:
-            unit_price = float(new_product.gia_chung or 0 or 0)
+            # Try gia_ban first, then gia_chung
+            unit_price = float(new_product.gia_ban or 0)
+            if unit_price == 0:
+                unit_price = float(new_product.gia_chung or 0)
             o.tong_tien = unit_price * int(new_quantity or 0)
         elif new_is_action:
             # Với hành động, sử dụng giá từ payload hoặc giá mặc định
             if new_price_item:
-                unit_price = float(new_price_item.gia_chung or 0 or 0)
+                unit_price = float(new_price_item.gia_chung or 0)
             else:
-                # Nếu không có price_item, sử dụng giá từ payload hoặc giá mặc định
-                unit_price = float(payload.tong_tien or o.tong_tien or 0) / max(int(new_quantity or 1), 1)
+                # Nếu không có price_item, sử dụng giá từ payload hoặc giá hiện tại
+                if payload.tong_tien and payload.tong_tien > 0:
+                    unit_price = float(payload.tong_tien) / max(int(new_quantity or 1), 1)
+                else:
+                    unit_price = float(o.tong_tien or 0) / max(int(new_quantity or 1), 1)
             o.tong_tien = unit_price * int(new_quantity or 0)
-    elif payload.tong_tien is not None:
-        o.tong_tien = payload.tong_tien
     
     db.commit()
     
@@ -268,31 +353,102 @@ def update_order(order_id: int, payload: OrderUpdate, db: Session = Depends(get_
             setattr(new_product, 'so_luong', new_stock)
             setattr(new_product, 'trang_thai', 'Còn hàng' if new_stock > 0 else 'Hết hàng')
         
+        db.flush()  # Flush để đảm bảo update được thực hiện
+    
+    # Lấy username từ token
+    username = get_username_from_request(request)
+    
+    # Ghi vào general_diary
+    try:
+        computed_total = o.tong_tien or 0.0
+        description_text = f"Sửa đơn hàng: {o.ma_don_hang} - Khách hàng: {o.thong_tin_kh}"
+        create_general_diary_entry(
+            db=db,
+            source="Order",
+            total_amount=float(computed_total),
+            quantity_out=0,
+            quantity_in=0,
+            description=description_text[:255],
+            username=username
+        )
         db.commit()
+    except Exception as diary_error:
+        log_error("UPDATE_ORDER_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+        db.commit()  # Vẫn commit việc update đơn hàng
     
     return {"success": True}
 
 
 @router.delete("/{order_id}")
-def delete_order(order_id: int, db: Session = Depends(get_db)):
-    o = db.query(Order).get(order_id)
-    if not o:
-        raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng")
-    
-    # CHỈ hoàn trả số lượng sản phẩm trước khi xóa đơn hàng (không hoàn trả cho hành động)
-    if o.sp_banggia or None and o.so_luong or None:
-        product = db.query(Product).filter(Product.ma_sp == o.sp_banggia or '').first()
-        if product:
-            # Chỉ hoàn trả nếu đây là sản phẩm (có trong bảng products)
-            current_qty = int(product.so_luong or 0 or 0)
-            order_qty = int(o.so_luong or 0 or 0)
-            setattr(product, 'so_luong', current_qty + order_qty)
-            setattr(product, 'trang_thai', 'Còn hàng' if (current_qty + order_qty) > 0 else 'Hết hàng')
-            db.commit()
-    
-    db.delete(o)
-    db.commit()
-    return {"success": True}
+def delete_order(order_id: int, request: Request, db: Session = Depends(get_db)):
+    try:
+        o = db.query(Order).get(order_id)
+        if not o:
+            raise HTTPException(status_code=404, detail="Không tìm thấy đơn hàng")
+        
+        # Lấy username từ token
+        username = get_username_from_request(request)
+        
+        # Lưu thông tin đơn hàng trước khi xóa
+        order_info = f"{o.ma_don_hang} - Khách hàng: {o.thong_tin_kh}"
+        order_total = float(o.tong_tien or 0)
+        order_sp_banggia = o.sp_banggia
+        order_so_luong = o.so_luong
+        
+        # CHỈ hoàn trả số lượng sản phẩm trước khi xóa đơn hàng (không hoàn trả cho hành động)
+        if order_sp_banggia and order_so_luong:
+            product = db.query(Product).filter(Product.ma_sp == order_sp_banggia).first()
+            if product:
+                # Chỉ hoàn trả nếu đây là sản phẩm (có trong bảng products)
+                current_qty = int(product.so_luong or 0)
+                order_qty = int(order_so_luong or 0)
+                new_qty = current_qty + order_qty
+                product.so_luong = new_qty
+                product.trang_thai = 'Còn hàng' if new_qty > 0 else 'Hết hàng'
+                
+                # Cập nhật warehouse nếu có
+                warehouse = db.query(Warehouse).filter(Warehouse.ma_sp == order_sp_banggia).first()
+                if warehouse:
+                    current_wh_qty = warehouse.so_luong or 0
+                    new_wh_qty = current_wh_qty + order_qty
+                    warehouse.so_luong = new_wh_qty
+                    warehouse.trang_thai = 'Còn hàng' if new_wh_qty > 0 else 'Hết hàng'
+                
+                db.flush()
+        
+        # Ghi vào general_diary trước khi xóa
+        try:
+            description_text = f"Xóa đơn hàng: {order_info}"
+            create_general_diary_entry(
+                db=db,
+                source="Order",
+                total_amount=order_total,
+                quantity_out=0,
+                quantity_in=order_so_luong if order_sp_banggia else 0,  # Hoàn trả = nhập lại
+                description=description_text[:255],
+                username=username
+            )
+            db.flush()
+        except Exception as diary_error:
+            log_error("DELETE_ORDER_DIARY", f"Lỗi khi ghi vào General Diary: {str(diary_error)}", error=diary_error)
+            # Tiếp tục xóa đơn hàng dù có lỗi ghi diary
+        
+        # Xóa đơn hàng
+        db.delete(o)
+        db.commit()
+        
+        log_success("DELETE_ORDER", f"Đã xóa đơn hàng: {order_info}")
+        return {"success": True}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        import traceback
+        error_trace = traceback.format_exc()
+        log_error("DELETE_ORDER", f"Lỗi khi xóa đơn hàng {order_id}: {str(e)}", error=e)
+        log_error("DELETE_ORDER", f"Traceback: {error_trace}")
+        raise HTTPException(status_code=500, detail=f"Lỗi khi xóa đơn hàng: {str(e)}")
 
 
 @router.post("/items")
